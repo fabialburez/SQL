@@ -1,0 +1,164 @@
+Danny wants to use the data to answer a few simple questions about his customers, especially about their visiting patterns, 
+how much money they’ve spent and also which menu items are their favourite. Having this deeper connection with his customers 
+will help him deliver a better and more personalised experience for his loyal customers.
+
+He plans on using these insights to help him decide whether he should expand the existing customer loyalty program - additionally 
+he needs help to generate some basic datasets so his team can easily inspect the data without needing to use SQL.
+
+Danny has shared with you 3 key datasets for this case study:
+Sales
+Menu
+Members
+
+The sales table captures all customer_id level purchases with an corresponding order_date and product_id information for when and what menu items were ordered.
+The menu table maps the product_id to the actual product_name and price of each menu item.
+The final members table captures the join_date when a customer_id joined the beta version of the Danny’s Diner loyalty program.
+
+-- 1. What is the total each customer spent at the restaurant? --
+SELECT sales.customer_id, SUM(menu.price) as total
+FROM dannys_diner.sales sales
+JOIN dannys_diner.menu menu
+ON sales.product_id = menu.product_id
+GROUP BY customer_id
+ORDER BY customer_id;
+
+-- 2. How many days has each customer visited the restaurant? --
+SELECT customer_id, COUNT(DISTINCT order_date)
+FROM dannys_diner.sales
+GROUP BY customer_id
+ORDER BY customer_id;
+
+-- 3. What was the first item from the menu purchased by each customer? --
+WITH ranked_sales AS (
+  SELECT 
+  sales.customer_id, 
+  menu.product_name,
+  DENSE_RANK() OVER (PARTITION BY sales.customer_id ORDER BY sales.order_date) AS d_rank
+  FROM dannys_diner.sales sales
+  INNER JOIN dannys_diner.menu menu
+  ON sales.product_id = menu.product_id
+)
+SELECT customer_id,
+       STRING_AGG(DISTINCT product_name, ', ') AS first_item_bought
+FROM ranked_sales
+WHERE d_rank = 1
+GROUP BY customer_id; 
+
+-- 4. What is the most purchased item on the menu and how many times was it purchased by all customers? --
+SELECT menu.product_name as most_purchased_item, COUNT(sales.product_id) as times_bought
+FROM dannys_diner.menu
+JOIN dannys_diner.sales
+ON menu.product_id = sales.product_id
+GROUP BY menu.product_name 
+ORDER BY times_bought DESC LIMIT 1;
+
+-- 5. Which item was the most popular for each customer? --
+WITH ranked_items AS (
+  SELECT 
+  sales.customer_id,
+  menu.product_name,
+  COUNT(*) AS purchase_count,
+  RANK() OVER (PARTITION BY sales.customer_id ORDER BY COUNT(*) DESC) as item_rank
+  FROM dannys_diner.sales sales
+  JOIN dannys_diner.menu menu
+  ON sales.product_id = menu.product_id
+  GROUP BY sales.customer_id, menu.product_name
+)
+
+SELECT customer_id,
+       STRING_AGG(product_name, ', ') AS most_popular_items
+FROM ranked_items
+WHERE item_rank = 1
+GROUP BY customer_id;
+
+-- 6. Which item was purchased first by the customer after they became a member? --
+WITH ranked_sales AS (
+  SELECT 
+  members.customer_id,
+  menu.product_name,
+  DENSE_RANK() OVER (PARTITION BY sales.customer_id ORDER BY sales.order_date) as d_rank
+  FROM dannys_diner.sales sales
+  INNER JOIN dannys_diner.menu menu
+  ON sales.product_id = menu.product_id
+  INNER JOIN dannys_diner.members members
+  ON sales.customer_id = members.customer_id
+  WHERE sales.order_date >= members.join_date
+)
+
+SELECT customer_id as member_id,
+       STRING_AGG(product_name, ', ') AS first_item_bought
+FROM ranked_sales
+WHERE d_rank = 1
+GROUP BY customer_id;
+
+-- 7. Which item was purchased just before the customer became a member? --
+WITH ranked_sales AS (
+  SELECT 
+  members.customer_id,
+  menu.product_name,
+  DENSE_RANK() OVER (PARTITION BY sales.customer_id ORDER BY sales.order_date DESC) as d_rank
+  FROM dannys_diner.sales sales
+  INNER JOIN dannys_diner.menu menu
+  ON sales.product_id = menu.product_id
+  INNER JOIN dannys_diner.members members
+  ON sales.customer_id = members.customer_id
+  WHERE sales.order_date < members.join_date
+)
+
+SELECT customer_id as member_id,
+       STRING_AGG(product_name, ', ') AS last_item_bought
+FROM ranked_sales
+WHERE d_rank = 1
+GROUP BY customer_id;
+
+-- 8. What is the total items and amount spent for each member before they became a member? --
+SELECT sales.customer_id,
+       COUNT(sales.product_id) as total_items,
+       SUM(menu.price) as amount_spent
+FROM dannys_diner.sales sales
+INNER JOIN dannys_diner.menu menu
+ON sales.product_id = menu.product_id
+LEFT JOIN dannys_diner.members members
+ON sales.customer_id = members.customer_id
+WHERE sales.order_date < members.join_date OR members.customer_id IS NULL
+GROUP BY sales.customer_id
+ORDER BY sales.customer_id;
+
+-- 9. If each $1 spent equates to 10 points and sushi has a 2x points multiplier - how many points would each customer have? --
+SELECT sales.customer_id,
+       SUM(CASE WHEN menu.product_name = 'sushi'
+           THEN menu.price * 20
+           ElSE menu.price * 10
+           END) AS total_points
+FROM dannys_diner.sales sales
+JOIN dannys_diner.menu menu
+ON sales.product_id = menu.product_id
+GROUP BY sales.customer_id
+ORDER BY sales.customer_id;
+
+-- 10. In the first week after a customer joins the program (including their join date) they earn 2x points on all items, not just sushi - how many
+points do customer A and B have at the end of January? --
+
+SELECT
+	sales.customer_id,
+   SUM(
+     CASE WHEN (order_date >= join_date) AND (order_date <= join_date + INTERVAL'7days')
+        THEN 20 * price
+        WHEN product_name = 'sushi' THEN 20 * price
+      	ELSE 10 * price
+      	END
+      ) points
+      
+FROM dannys_diner.sales sales
+INNER JOIN dannys_diner.menu menu
+ON sales.product_id = menu.product_id
+INNER JOIN dannys_diner.members members
+ON sales.customer_id = members.customer_id
+WHERE order_date < '2021-02-01'
+GROUP BY sales.customer_id;
+
+
+
+
+
+
